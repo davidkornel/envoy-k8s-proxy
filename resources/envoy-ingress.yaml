@@ -1,0 +1,86 @@
+  
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: envoy-ingress-config
+data:
+  envoy.yaml: |
+    admin:
+      access_log_path: /tmp/admin_access.log
+      address:
+        socket_address:
+          protocol: TCP
+          address: 0.0.0.0
+          port_value: 9901
+    static_resources:
+      listeners:
+      - name: listener_0
+        reuse_port: true
+        address:
+          socket_address:
+            protocol: UDP
+            address: 0.0.0.0
+            port_value: 1234
+        listener_filters:
+          name: envoy.filters.udp_listener.udp_proxy
+          typed_config:
+            '@type': type.googleapis.com/envoy.extensions.filters.udp.udp_proxy.v3.UdpProxyConfig
+            stat_prefix: service
+            cluster: service_udp
+      clusters:
+      - name: service_udp
+        connect_timeout: 0.25s
+        type: STATIC
+        lb_policy: ROUND_ROBIN
+        load_assignment:
+          cluster_name: service_udp
+          endpoints:
+          - lb_endpoints:
+            - endpoint:
+                address:
+                  socket_address:
+                    address: 127.0.0.1 
+                    # net-debug.default.svc
+                    port_value: 1235
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: envoy-ingress
+  labels:
+    app: envoy-ingress
+  namespace: default
+spec:
+  selector:
+    matchLabels:
+      app: envoy-ingress
+  template:
+    metadata:
+      labels:
+        app: envoy-ingress
+    spec:
+      volumes:
+        - name: envoy-ingress-config
+          configMap:
+            name: envoy-ingress-config
+      containers: 
+      - name: envoy-ingress
+        image: envoyproxy/envoy:v1.17-latest
+        imagePullPolicy: Always
+        command: [ "envoy" ]
+        args: ["-c", "/etc/envoy/envoy.yaml", "-l", "trace"]
+        ports:
+          - containerPort: 9901
+            name: web
+          - containerPort: 1234
+            name: udp-listener
+        volumeMounts:
+          - name: envoy-ingress-config
+            mountPath: /etc/envoy
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+---
+    
+    
+    
+    
