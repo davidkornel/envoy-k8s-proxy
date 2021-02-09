@@ -1,8 +1,8 @@
-  
+ 
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: envoy-ingress-config
+  name: envoy-worker-config
 data:
   envoy.yaml: |
     admin:
@@ -14,7 +14,7 @@ data:
           port_value: 9901
     static_resources:
       listeners:
-      - name: listener_a_rtp
+      - name: ng-control
         reuse_port: true
         address:
           socket_address:
@@ -26,15 +26,14 @@ data:
           typed_config:
             '@type': type.googleapis.com/envoy.extensions.filters.udp.udp_proxy.v3.UdpProxyConfig
             stat_prefix: service
-            cluster: service_udp
+            cluster: udp-worker-rtpengine-ng
       - name: rtp-a
         reuse_port: true
         address:
           socket_address:
             protocol: UDP
             address: 0.0.0.0
-            #offer modified sdp rtp port for user A
-            port_value: 19500
+            port_value: 19000
         listener_filters:
           name: envoy.filters.udp_listener.udp_proxy
           typed_config:
@@ -47,8 +46,7 @@ data:
           socket_address:
             protocol: UDP
             address: 0.0.0.0
-            #offer modified sdp rtcp port for user A
-            port_value: 19501
+            port_value: 19001
         listener_filters:
           name: envoy.filters.udp_listener.udp_proxy
           typed_config:
@@ -61,8 +59,7 @@ data:
           socket_address:
             protocol: UDP
             address: 0.0.0.0
-            #offer modified sdp rtp port for user B
-            port_value: 19502
+            port_value: 19002
         listener_filters:
           name: envoy.filters.udp_listener.udp_proxy
           typed_config:
@@ -75,8 +72,7 @@ data:
           socket_address:
             protocol: UDP
             address: 0.0.0.0
-            #offer modified sdp rtcp port for user B
-            port_value: 19503
+            port_value: 19003
         listener_filters:
           name: envoy.filters.udp_listener.udp_proxy
           typed_config:
@@ -84,9 +80,9 @@ data:
             stat_prefix: service
             cluster: worker-rtcp-b
       clusters:
-      - name: service_udp
+      - name: udp-worker-rtpengine-ng
         connect_timeout: 0.25s
-        type: STRICT_DNS
+        type: STATIC
         lb_policy: ROUND_ROBIN
         load_assignment:
           cluster_name: service_udp
@@ -95,11 +91,11 @@ data:
             - endpoint:
                 address:
                   socket_address:
-                    address: envoy-worker.default.svc
-                    port_value: 22222
+                    address: 127.0.0.1
+                    port_value: 22224
       - name: worker-rtp-a
         connect_timeout: 0.25s
-        type: STRICT_DNS
+        type: STATIC
         lb_policy: ROUND_ROBIN
         load_assignment:
           cluster_name: service_udp
@@ -108,11 +104,12 @@ data:
             - endpoint:
                 address:
                   socket_address:
-                    address: envoy-worker.default.svc
-                    port_value: 19000
+                    address: 127.0.0.1
+                    #offer modified sdp rtp port for user A
+                    port_value: 19500
       - name: worker-rtcp-a
         connect_timeout: 0.25s
-        type: STRICT_DNS
+        type: STATIC
         lb_policy: ROUND_ROBIN
         load_assignment:
           cluster_name: service_udp
@@ -121,11 +118,12 @@ data:
             - endpoint:
                 address:
                   socket_address:
-                    address: envoy-worker.default.svc
-                    port_value: 19001
+                    address: 127.0.0.1
+                    #offer modified sdp rtcp port for user A
+                    port_value: 19501
       - name: worker-rtp-b
         connect_timeout: 0.25s
-        type: STRICT_DNS
+        type: STATIC
         lb_policy: ROUND_ROBIN
         load_assignment:
           cluster_name: service_udp
@@ -134,11 +132,12 @@ data:
             - endpoint:
                 address:
                   socket_address:
-                    address: envoy-worker.default.svc
-                    port_value: 19002
+                    address: 127.0.0.1
+                    #offer modified sdp rtp port for user B
+                    port_value: 19502
       - name: worker-rtcp-b
         connect_timeout: 0.25s
-        type: STRICT_DNS
+        type: STATIC
         lb_policy: ROUND_ROBIN
         load_assignment:
           cluster_name: service_udp
@@ -147,31 +146,79 @@ data:
             - endpoint:
                 address:
                   socket_address:
-                    address: envoy-worker.default.svc
-                    port_value: 19003
+                    address: 127.0.0.1
+                    #offer modified sdp rtcp port for user B
+                    port_value: 19503
 ---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rtpengine-config
+  namespace: default
+data:
+  rtpengine.conf: |
+    [rtpengine]
+    # access only via the sidecar proxy
+    # listen-ng=MY_IP:22222
+    # interface=MY_IP
+    listen-ng=127.0.0.1:22224
+    interface=lo
+    foreground=true
+    log-stderr=true
+    port-min=10000
+    port-max=20000
+    recording-dir=/tmp
+    recording-method=pcap
+    recording-format=eth
+    log-level=7
+    delete-delay=0
+    timeout=3600
+    # redis = 127.0.0.1:6379/5
+    # redis-write = password@12.23.34.45:6379/42
+    # redis-num-threads = 8
+    # no-redis-required = false
+    # redis-expires = 86400
+    # redis-allowed-errors = -1
+    # redis-disable-time = 10
+    # redis-cmd-timeout = 0
+    # redis-connect-timeout = 1000
+    # sip-source = false
+    # dtls-passive = false
+---
+
+# worker
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: envoy-ingress
+  name: envoy-worker
   labels:
-    app: envoy-ingress
-  namespace: default
+    app: envoy-worker
 spec:
+  replicas: 1
   selector:
     matchLabels:
-      app: envoy-ingress
+      app: envoy-worker
   template:
     metadata:
       labels:
-        app: envoy-ingress
+        app: envoy-worker
+      annotations:
+        sidecar.istio.io/inject: "false"
     spec:
       volumes:
-        - name: envoy-ingress-config
+        - name: envoy-config-volume
           configMap:
-            name: envoy-ingress-config
-      containers: 
-      - name: envoy-ingress
+            name: envoy-worker-config
+        - name: rtpengine-config-volume
+          configMap:
+            name: rtpengine-config
+        - name: kernel-debug
+          hostPath:
+            path: /sys/kernel/debug
+            type: Directory
+      containers:
+      # sidecar
+      - name: envoy-worker
         image: envoyproxy/envoy:v1.17-latest
         imagePullPolicy: Always
         #command: [ "envoy" ]
@@ -184,20 +231,55 @@ spec:
           - containerPort: 22222
             name: udp-listener
         volumeMounts:
-          - name: envoy-ingress-config
+          - name: envoy-config-volume
             mountPath: /etc/envoy
-      hostNetwork: true
-      dnsPolicy: ClusterFirstWithHostNet
+      #- name: net-debug
+        #image: retvari/net-debug:latest
+        #imagePullPolicy: IfNotPresent
+        #ports:
+          #- containerPort: 1236
+            #name: net-debug
+      - name: rtpengine
+        image: drachtio/rtpengine
+        imagePullPolicy: IfNotPresent
+        # command: ["/bin/sh"]
+        # args: ["-c", "while true; do echo hello; sleep 10;done"]
+        command: [ "/usr/local/bin/rtpengine" ]
+        args: [ "--config-file=/etc/rtpengine/rtpengine.conf", "-i", "lo", "-f", "-L", "7", "-E" ]
+        volumeMounts:
+          - name: rtpengine-config-volume
+            mountPath: /etc/rtpengine
+
 ---
-    #rm var/lib/envoy/envoy.yaml && cp /etc/envoy/envoy.yaml /var/lib/envoy/
-    #mkdir /var/lib/envoy && cp /etc/envoy/envoy.yaml /var/lib/envoy/
-    #envoy -c /var/lib/envoy/envoy.yaml
-    
-    #BOTH RTP AND RTCP
-    #sed -i s/19500/10352/ /var/lib/envoy/envoy.yaml; sed -i s/19501/10353/ /var/lib/envoy/envoy.yaml; sed -i s/19502/10334/ /var/lib/envoy/envoy.yaml; sed -i s/19503/10335/ /var/lib/envoy/envoy.yaml
-    
-    #ONLY RTP
-    #sed -i s/19500/10324/ /var/lib/envoy/envoy.yaml; sed -i s/19502/10312/ /var/lib/envoy/envoy.yaml;
-    
-    
-   #sed -i s/10180/19500/ /var/lib/envoy/envoy.yaml; sed -i s/10164/19501/ /var/lib/envoy/envoy.yaml; sed -i s/10076/19502/ /var/lib/envoy/envoy.yaml; sed -i s/10061/19503/ /var/lib/envoy/envoy.yaml
+
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: envoy-worker
+  name: envoy-worker
+spec:
+  ports:
+  - port: 19000
+    name: worker-rtp-a-service-port
+    protocol: UDP
+    targetPort: 19000
+  - port: 19001
+    name: worker-rtcp-a-service-port
+    protocol: UDP
+    targetPort: 19001
+  - port: 19002
+    name: worker-rtp-b-service-port
+    protocol: UDP
+    targetPort: 19002
+  - port: 19003
+    name: worker-rtcp-b-service-port
+    protocol: UDP
+    targetPort: 19003
+  - port: 22222
+    name: udp-rtpengine-ng-port
+    protocol: UDP
+    targetPort: 22222
+  selector:
+    app: envoy-worker
+  type: ClusterIP
